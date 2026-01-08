@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "python-coverage-agent"
+version = "0.1.0"
+description = "PYCA (Python Coverage Agent) - 业务无侵入的Python覆盖率上报插件"
+readme = "README.md"
+requires-python = ">=3.7"
+license = {text = "MIT"}
+authors = [
+    {name = "PCA Team"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "coverage>=7.0.0",
+    "pika>=1.3.0",
+]
+
+[project.scripts]
+pyca = "pyca.cli:main"
+
+[tool.setuptools]
+packages = ["pyca"]
+
+[tool.setuptools.package-data]
+pca = ["sitecustomize.py"]
+
