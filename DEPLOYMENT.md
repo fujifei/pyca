@@ -10,15 +10,15 @@
 
 ```bash
 # 方式1.1: 从源码目录安装
-cd /path/to/orbit/pca
+cd /path/to/pyca
 pip install .
 
 # 方式1.2: 从源码目录安装（开发模式，修改代码后无需重新安装）
-cd /path/to/orbit/pca
+cd /path/to/pyca
 pip install -e .
 
 # 方式1.3: 从其他项目直接安装
-pip install /path/to/orbit/pca
+pip install /path/to/pyca
 ```
 
 ### 方式2: 从 Git 仓库安装
@@ -27,13 +27,13 @@ pip install /path/to/orbit/pca
 
 ```bash
 # 从 Git 仓库安装
-pip install git+https://github.com/your-org/orbit.git#subdirectory=pca
+pip install git+https://github.com/fujifei/pyca.git
 
 # 或指定分支/标签
-pip install git+https://github.com/your-org/orbit.git@main#subdirectory=pca
+pip install git+https://github.com/fujifei/pyca.git@main
 
 # 或使用 SSH
-pip install git+ssh://git@github.com/your-org/orbit.git#subdirectory=pca
+pip install git+ssh://git@github.com/fujifei/pyca.git
 ```
 
 ### 方式3: 打包成 Wheel 文件分发
@@ -41,7 +41,7 @@ pip install git+ssh://git@github.com/your-org/orbit.git#subdirectory=pca
 #### 3.1 构建 Wheel 包
 
 ```bash
-cd /path/to/orbit/pca
+cd /path/to/pyca
 
 # 安装构建工具
 pip install build wheel
@@ -73,7 +73,7 @@ pip install http://your-server.com/packages/python_coverage_agent-0.1.0-py3-none
 #### 4.1 发布到公开 PyPI
 
 ```bash
-cd /path/to/orbit/pca
+cd /path/to/pyca
 
 # 安装发布工具
 pip install build twine
@@ -109,10 +109,10 @@ pip install --index-url https://your-private-pypi.com/simple python-coverage-age
 
 ```txt
 # 方式5.1: 从本地路径
--e /path/to/orbit/pca
+-e /path/to/pyca
 
 # 方式5.2: 从 Git 仓库
-git+https://github.com/your-org/orbit.git#subdirectory=pca
+git+https://github.com/fujifei/pyca.git
 
 # 方式5.3: 从 Wheel 文件
 python_coverage_agent @ file:///path/to/python_coverage_agent-0.1.0-py3-none-any.whl
@@ -135,7 +135,7 @@ pip install -r requirements.txt
 pip show python-coverage-agent
 
 # 检查 CLI 工具
-pca status
+pyca status
 
 # 检查钩子文件是否生成
 python -c "import site; print(site.getsitepackages())"
@@ -154,7 +154,7 @@ python -c "import site; print(site.getsitepackages())"
 1. 检查安装日志，查看是否有错误
 2. 手动运行安装钩子：
    ```bash
-   python -c "from pca.install_hooks import install_hooks; install_hooks()"
+   python -c "from pyca.install_hooks import install_hooks; install_hooks()"
    ```
 
 ### Q2: 使用 `pip install -e .` 后修改代码不生效
@@ -174,9 +174,9 @@ pip install -e . --force-reinstall --no-cache-dir
 **解决**:
 ```bash
 # 为每个环境分别安装
-python3.8 -m pip install /path/to/orbit/pca
-python3.9 -m pip install /path/to/orbit/pca
-python3.10 -m pip install /path/to/orbit/pca
+python3.8 -m pip install /path/to/pyca
+python3.9 -m pip install /path/to/pyca
+python3.10 -m pip install /path/to/pyca
 ```
 
 ### Q4: 虚拟环境中安装
@@ -188,7 +188,7 @@ source venv/bin/activate  # Linux/Mac
 # 或
 venv\Scripts\activate  # Windows
 
-pip install /path/to/orbit/pca
+pip install /path/to/pyca
 ```
 
 ## 推荐方案

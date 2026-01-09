@@ -8,15 +8,15 @@
 
 ```bash
 # 从源码目录安装
-cd /path/to/orbit/pca
+cd /path/to/pyca
 pip install .
 
 # 开发模式安装（修改代码后无需重新安装）
-cd /path/to/orbit/pca
+cd /path/to/pyca
 pip install -e .
 
 # 从其他项目直接安装
-pip install /path/to/orbit/pca
+pip install /path/to/pyca
 ```
 
 ### 方式2: 从 Git 仓库安装
@@ -25,17 +25,17 @@ pip install /path/to/orbit/pca
 
 ```bash
 # 从 Git 仓库安装
-pip install git+https://github.com/your-org/orbit.git#subdirectory=pca
+pip install git+https://github.com/fujifei/pyca.git
 
 # 或指定分支/标签
-pip install git+https://github.com/your-org/orbit.git@main#subdirectory=pca
+pip install git+https://github.com/fujifei/pyca.git@main
 ```
 
 ### 方式3: 从 Wheel 文件安装
 
 ```bash
-# 先构建 wheel 包（在 pca 目录下）
-cd /path/to/orbit/pca
+# 先构建 wheel 包
+cd /path/to/pyca
 pip install build wheel
 python -m build --wheel
 
@@ -55,10 +55,10 @@ pip install python-coverage-agent
 
 ```txt
 # 从本地路径
--e /path/to/orbit/pca
+-e /path/to/pyca
 
 # 或从 Git 仓库
-git+https://github.com/your-org/orbit.git#subdirectory=pca
+git+https://github.com/fujifei/pyca.git
 
 # 或从 PyPI（如果已发布）
 python-coverage-agent>=0.1.0
@@ -99,11 +99,11 @@ export PCA_ENABLED=1
 ### 验证安装
 
 ```bash
-# 检查PCA状态
-pca status
+# 检查PYCA状态
+pyca status
 
 # 测试agent
-pca test
+pyca test
 ```
 
 ## 使用

@@ -5,8 +5,8 @@
 ### 步骤1: 安装 PCA
 
 ```bash
-# 在 PCA 项目目录下
-cd /path/to/orbit/pca
+# 在 PYCA 项目目录下
+cd /path/to/pyca
 
 # 开发模式安装（推荐，修改代码后无需重新安装）
 pip install -e .
@@ -37,7 +37,7 @@ PCA 会自动启动并开始采集覆盖率。
 
 ```txt
 # 从本地路径安装
--e /path/to/orbit/pca
+-e /path/to/pyca
 ```
 
 然后安装：
@@ -51,17 +51,17 @@ pip install -r requirements.txt
 
 ```txt
 # 从 Git 仓库安装
-git+https://github.com/your-org/orbit.git#subdirectory=pca
+git+https://github.com/fujifei/pyca.git
 ```
 
 ### 方式C: 直接安装
 
 ```bash
 # 从本地路径
-pip install /path/to/orbit/pca
+pip install /path/to/pyca
 
 # 从 Git 仓库
-pip install git+https://github.com/your-org/orbit.git#subdirectory=pca
+pip install git+https://github.com/fujifei/pyca.git
 ```
 
 ## 场景3: CI/CD 集成
@@ -69,9 +69,9 @@ pip install git+https://github.com/your-org/orbit.git#subdirectory=pca
 ### GitHub Actions 示例
 
 ```yaml
-- name: Install PCA
+- name: Install PYCA
   run: |
-    pip install git+https://github.com/your-org/orbit.git#subdirectory=pca
+    pip install git+https://github.com/fujifei/pyca.git
 
 - name: Set PCA environment
   run: |
@@ -86,9 +86,9 @@ pip install git+https://github.com/your-org/orbit.git#subdirectory=pca
 ### Jenkins 示例
 
 ```groovy
-stage('Install PCA') {
+stage('Install PYCA') {
     sh '''
-        pip install git+https://github.com/your-org/orbit.git#subdirectory=pca
+        pip install git+https://github.com/fujifei/pyca.git
     '''
 }
 
@@ -107,7 +107,7 @@ stage('Run Tests') {
 pip show python-coverage-agent
 
 # 检查 CLI 工具
-pca status
+pyca status
 
 # 检查钩子文件
 python -c "import site; import os; sp = site.getsitepackages()[0]; print(f'PTH: {os.path.join(sp, \"platform_coverage_agent.pth\")}'); print(f'Sitecustomize: {os.path.join(sp, \"sitecustomize.py\")}')"

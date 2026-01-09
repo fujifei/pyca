@@ -4,14 +4,14 @@
 # ============================================
 # 方式1: 从本地路径安装（开发测试推荐）
 # ============================================
-# -e /path/to/orbit/pca
+# -e /path/to/pyca
 
 # ============================================
 # 方式2: 从 Git 仓库安装
 # ============================================
-# git+https://github.com/your-org/orbit.git#subdirectory=pca
+# git+https://github.com/fujifei/pyca.git
 # 或指定分支
-# git+https://github.com/your-org/orbit.git@main#subdirectory=pca
+# git+https://github.com/fujifei/pyca.git@main
 
 # ============================================
 # 方式3: 从 Wheel 文件安装

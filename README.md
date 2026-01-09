@@ -155,10 +155,10 @@ PYCA (Python Coverage Agent) 是一个零侵入的Python代码覆盖率采集和
 
 ```bash
 # 方式1: 从本地路径安装（开发测试推荐）
-pip install /path/to/orbit/pyca
+pip install /path/to/pyca
 
 # 方式2: 从 Git 仓库安装
-pip install git+https://github.com/your-org/orbit.git#subdirectory=pyca
+pip install git+https://github.com/fujifei/pyca.git
 
 # 方式3: 从 PyPI 安装（如果已发布）
 pip install python-coverage-agent
