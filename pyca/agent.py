@@ -278,7 +278,10 @@ class CoverageAgent:
                 self._start_timer()
     
     def _report_on_startup(self):
-        """启动时上报覆盖率（不检查变化）"""
+        """启动时上报覆盖率（不检查变化）
+        
+        注意：此方法捕获所有异常，确保上报失败不会影响被测服务的启动
+        """
         logger.info("[PYCA] Reporting coverage on startup...")
         
         # 延迟一小段时间，确保coverage能收集到初始数据
@@ -290,32 +293,40 @@ class CoverageAgent:
         self.cov.stop()
         
         try:
-            # b. 生成 coverage data
-            coverage_data = self._get_coverage_data()
-            
-            # 检查是否有数据
-            total_lines = sum(len(lines) for lines in coverage_data.values())
-            logger.info(f"[PYCA] Coverage data collected: {len(coverage_data)} files, {total_lines} total lines")
-            
-            # c. 提取 executed_lines（用于更新fingerprint）
-            executed_lines = self._extract_executed_lines(coverage_data)
-            
-            # d. 行 → 区间压缩
-            ranges = self._compress_to_ranges(executed_lines)
-            
-            # e. 计算 fingerprint
-            fingerprint = self._calculate_fingerprint(ranges)
-            
-            # f. 直接上报（不检查变化，即使数据为空也要上报）
-            logger.info("[PYCA] Reporting coverage on startup (no change check)")
-            self._report_coverage(coverage_data)
-            
-            # g. 更新 fingerprint
-            self.last_fingerprint = fingerprint
-            self._save_fingerprint(fingerprint)
+            try:
+                # b. 生成 coverage data
+                coverage_data = self._get_coverage_data()
+                
+                # 检查是否有数据
+                total_lines = sum(len(lines) for lines in coverage_data.values())
+                logger.info(f"[PYCA] Coverage data collected: {len(coverage_data)} files, {total_lines} total lines")
+                
+                # c. 提取 executed_lines（用于更新fingerprint）
+                executed_lines = self._extract_executed_lines(coverage_data)
+                
+                # d. 行 → 区间压缩
+                ranges = self._compress_to_ranges(executed_lines)
+                
+                # e. 计算 fingerprint
+                fingerprint = self._calculate_fingerprint(ranges)
+                
+                # f. 直接上报（不检查变化，即使数据为空也要上报）
+                logger.info("[PYCA] Reporting coverage on startup (no change check)")
+                self._report_coverage(coverage_data)  # 内部已捕获异常，不会抛出
+                
+                # g. 更新 fingerprint
+                self.last_fingerprint = fingerprint
+                self._save_fingerprint(fingerprint)
+            except Exception as e:
+                # 额外保护：即使 _report_coverage 内部有未捕获的异常，也不会影响服务启动
+                logger.error(f"[PYCA] Error in startup coverage report: {e}", exc_info=True)
+                logger.warning("[PYCA] Startup coverage report failed, but continuing service startup (non-blocking)")
         finally:
-            # h. cov.start()
-            self.cov.start()
+            # h. cov.start() - 确保覆盖率收集继续运行
+            try:
+                self.cov.start()
+            except Exception as e:
+                logger.error(f"[PYCA] Failed to restart coverage collection: {e}", exc_info=True)
         
         logger.info("[PYCA] Startup coverage report completed")
     
@@ -392,11 +403,16 @@ class CoverageAgent:
                 logger.info(f"[PYCA] Coverage unchanged, skipping report (fingerprint matches: {fingerprint[:16] if fingerprint else 'None'}...)")
             
             if should_report:
-                # g. 上报
-                self._report_coverage(coverage_data)
-                # h. 更新 fingerprint
-                self.last_fingerprint = fingerprint
-                self._save_fingerprint(fingerprint)
+                # g. 上报（内部已捕获异常，不会抛出）
+                try:
+                    self._report_coverage(coverage_data)
+                    # h. 更新 fingerprint（只有上报成功才更新）
+                    self.last_fingerprint = fingerprint
+                    self._save_fingerprint(fingerprint)
+                except Exception as e:
+                    # 额外保护：即使 _report_coverage 内部有未捕获的异常，也不会影响服务运行
+                    logger.error(f"[PYCA] Error reporting coverage in flush: {e}", exc_info=True)
+                    logger.warning("[PYCA] Coverage report failed, but continuing service execution (non-blocking)")
         finally:
             # i. cov.start() - 继续覆盖率收集
             self.cov.start()
@@ -738,7 +754,10 @@ class CoverageAgent:
             logger.error(f"[PYCA] Failed to save fingerprint: {e}")
     
     def _report_coverage(self, coverage_data: Dict):
-        """上报覆盖率到MQ"""
+        """上报覆盖率到MQ
+        
+        注意：此方法捕获所有异常，确保上报失败不会影响被测服务的正常运行
+        """
         if not self.rabbitmq_url:
             logger.warning("[PYCA] RabbitMQ URL not configured, skipping report")
             return
@@ -822,11 +841,13 @@ class CoverageAgent:
             logger.info(f"[PYCA] {report_json}")
             logger.info("[PYCA] ============================================")
             
-            # 上报到MQ
+            # 上报到MQ（内部会捕获异常，不会抛出）
             self._publish_to_mq(report)
             
         except Exception as e:
+            # 捕获所有异常，确保上报失败不会影响被测服务
             logger.error(f"[PYCA] Failed to report coverage: {e}", exc_info=True)
+            # 不重新抛出异常，确保被测服务继续正常运行
     
     def _format_coverage_raw(self, coverage_data: Dict) -> str:
         """
@@ -1334,7 +1355,11 @@ class CoverageAgent:
         return None
     
     def _publish_to_mq(self, report: Dict):
-        """发布消息到RabbitMQ"""
+        """发布消息到RabbitMQ
+        
+        注意：此方法捕获所有异常并记录日志，不会抛出异常，确保上报失败不会影响被测服务
+        """
+        connection = None
         try:
             # 解析RabbitMQ URL
             parsed = urlparse(self.rabbitmq_url)
@@ -1356,7 +1381,8 @@ class CoverageAgent:
             if not host or host == 'localhost':
                 error_msg = f"[PYCA] ERROR: Invalid RabbitMQ hostname '{host}' from URL '{self.rabbitmq_url}'. Please check your configuration."
                 logger.error(error_msg)
-                raise ValueError(error_msg)
+                # 不抛出异常，只记录日志
+                return
             
             # 验证hostname是否可以解析（避免DNS解析失败导致pika回退到localhost）
             try:
@@ -1366,7 +1392,8 @@ class CoverageAgent:
             except socket.gaierror as e:
                 error_msg = f"[PYCA] ERROR: Cannot resolve hostname '{host}' from URL '{self.rabbitmq_url}'. DNS error: {e}"
                 logger.error(error_msg)
-                raise ValueError(error_msg) from e
+                # 不抛出异常，只记录日志
+                return
             
             credentials = pika.PlainCredentials(username, password)
             parameters = pika.ConnectionParameters(
@@ -1404,11 +1431,20 @@ class CoverageAgent:
             )
             
             connection.close()
+            connection = None  # 标记已关闭，避免在finally中重复关闭
             
             logger.info(f"[PYCA] Coverage report published successfully: repo={report.get('repo')}, "
                        f"branch={report.get('branch')}, commit={report.get('commit')}")
         
         except Exception as e:
+            # 捕获所有异常，记录日志但不抛出，确保不影响被测服务
             logger.error(f"[PYCA] Failed to publish to MQ: {e}", exc_info=True)
-            raise
+            logger.warning("[PYCA] Coverage report failed, but continuing service execution (non-blocking)")
+        finally:
+            # 确保连接被正确关闭
+            if connection is not None and not connection.is_closed:
+                try:
+                    connection.close()
+                except Exception as e:
+                    logger.debug(f"[PYCA] Error closing connection: {e}")
 
