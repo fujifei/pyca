@@ -38,6 +38,11 @@ class CoverageAgent:
             os.getenv('PCA_RABBITMQ_URL') or 
             'amqp://coverage:coverage123@rabbitmq:5672/'
         )
+        # 记录实际使用的RabbitMQ URL（用于调试）
+        logger.info(f"[PYCA] RabbitMQ URL configured: {self.rabbitmq_url}")
+        # 解析并验证URL
+        parsed = urlparse(self.rabbitmq_url)
+        logger.info(f"[PYCA] Parsed RabbitMQ hostname: {parsed.hostname}, port: {parsed.port}")
         # PYCA_FLUSH_INTERVAL: 优先使用config，其次环境变量（支持PCA_*向后兼容），最后使用默认值60
         flush_interval_str = (
             self.config.get('flush_interval') or 
@@ -1129,15 +1134,41 @@ class CoverageAgent:
             port = parsed.port or 5672
             vhost = parsed.path.lstrip('/') or '/'
             
+            # 添加调试日志
+            logger.info(f"[PYCA] Connecting to RabbitMQ: host={host}, port={port}, vhost={vhost}, username={username}")
+            logger.debug(f"[PYCA] Full RabbitMQ URL: {self.rabbitmq_url}")
+            logger.debug(f"[PYCA] Parsed URL components: hostname={parsed.hostname}, port={parsed.port}, path={parsed.path}")
+            
             # 连接RabbitMQ
+            # 验证hostname不为空，避免回退到localhost
+            if not host or host == 'localhost':
+                error_msg = f"[PYCA] ERROR: Invalid RabbitMQ hostname '{host}' from URL '{self.rabbitmq_url}'. Please check your configuration."
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            
+            # 验证hostname是否可以解析（避免DNS解析失败导致pika回退到localhost）
+            try:
+                import socket
+                resolved = socket.gethostbyname(host)
+                logger.info(f"[PYCA] DNS resolution for '{host}': {resolved}")
+            except socket.gaierror as e:
+                error_msg = f"[PYCA] ERROR: Cannot resolve hostname '{host}' from URL '{self.rabbitmq_url}'. DNS error: {e}"
+                logger.error(error_msg)
+                raise ValueError(error_msg) from e
+            
             credentials = pika.PlainCredentials(username, password)
             parameters = pika.ConnectionParameters(
                 host=host,
                 port=port,
                 virtual_host=vhost,
-                credentials=credentials
+                credentials=credentials,
+                socket_timeout=10,  # 设置socket超时
+                connection_attempts=1,  # 只尝试一次，避免自动重试
+                retry_delay=0,  # 不延迟重试
             )
             
+            logger.info(f"[PYCA] Pika connection parameters: host={parameters.host}, port={parameters.port}, vhost={parameters.virtual_host}")
+            logger.info(f"[PYCA] Attempting to connect to RabbitMQ at {host}:{port}...")
             connection = pika.BlockingConnection(parameters)
             channel = connection.channel()
             
