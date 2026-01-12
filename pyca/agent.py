@@ -1368,7 +1368,7 @@ class CoverageAgent:
         try:
             # 解析RabbitMQ URL
             parsed = urlparse(self.rabbitmq_url)
-            
+            logger.info(f"[PYCA] Parsed RabbitMQ URL: {parsed}")
             # 提取认证信息
             username = parsed.username or 'guest'
             password = parsed.password or 'guest'
@@ -1378,8 +1378,8 @@ class CoverageAgent:
             
             # 添加调试日志
             logger.info(f"[PYCA] Connecting to RabbitMQ: host={host}, port={port}, vhost={vhost}, username={username}")
-            logger.debug(f"[PYCA] Full RabbitMQ URL: {self.rabbitmq_url}")
-            logger.debug(f"[PYCA] Parsed URL components: hostname={parsed.hostname}, port={parsed.port}, path={parsed.path}")
+            logger.info(f"[PYCA] Full RabbitMQ URL: {self.rabbitmq_url}")
+            logger.info(f"[PYCA] Parsed URL components: hostname={parsed.hostname}, port={parsed.port}, path={parsed.path}")
             
             # 连接RabbitMQ
             # 验证hostname不为空，避免回退到localhost
