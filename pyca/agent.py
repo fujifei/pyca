@@ -41,11 +41,9 @@ class CoverageAgent:
             os.getenv('PCA_RABBITMQ_URL') or 
             'amqp://coverage:coverage123@rabbitmq:5672/'
         )
-        # 记录实际使用的RabbitMQ URL（用于调试）
-        logger.info(f"[PYCA] RabbitMQ URL configured: {self.rabbitmq_url}")
         # 解析并验证URL
         parsed = urlparse(self.rabbitmq_url)
-        logger.info(f"[PYCA] Parsed RabbitMQ hostname: {parsed.hostname}, port: {parsed.port}")
+        
         # PYCA_FLUSH_INTERVAL: 优先使用config，其次环境变量（支持PCA_*向后兼容），最后使用默认值60
         flush_interval_str = (
             self.config.get('flush_interval') or 
@@ -78,6 +76,10 @@ class CoverageAgent:
         # 定时器
         self.timer = None
         self.running = False
+        
+        # Coverage操作锁（确保start/stop操作的线程安全）
+        self._coverage_lock = threading.Lock()
+        self._coverage_started = True  # 初始化时已启动
         
         # Git信息缓存
         self._git_info = None
@@ -116,6 +118,61 @@ class CoverageAgent:
                     logger.debug(f"[PYCA]   {host_path} -> {container_path}")
         
         logger.info(f"[PYCA] Agent initialized, flush_interval={self.flush_interval}s")
+    
+    def _safe_stop_coverage(self):
+        """
+        安全地停止覆盖率收集（线程安全）
+        
+        如果coverage已经停止或处于不一致状态，会优雅地处理
+        """
+        with self._coverage_lock:
+            if not self._coverage_started:
+                logger.debug("[PYCA] Coverage already stopped, skipping stop()")
+                return
+            
+            try:
+                self.cov.stop()
+                self._coverage_started = False
+                logger.debug("[PYCA] Coverage collection stopped safely")
+            except AssertionError as e:
+                # 处理collector状态不一致的情况
+                logger.warning(f"[PYCA] Coverage collector state inconsistent during stop: {e}")
+                logger.warning("[PYCA] Attempting to recover by checking collector state...")
+                # 尝试通过检查内部状态来恢复
+                try:
+                    # 如果collector存在但状态不一致，尝试重置
+                    if hasattr(self.cov, '_collector') and self.cov._collector is not None:
+                        # 强制标记为已停止
+                        self._coverage_started = False
+                        logger.warning("[PYCA] Marked coverage as stopped despite assertion error")
+                except Exception as recovery_error:
+                    logger.error(f"[PYCA] Failed to recover coverage state: {recovery_error}")
+                    # 即使恢复失败，也标记为已停止，避免重复尝试
+                    self._coverage_started = False
+            except Exception as e:
+                logger.error(f"[PYCA] Unexpected error stopping coverage: {e}", exc_info=True)
+                # 标记为已停止，避免重复尝试
+                self._coverage_started = False
+    
+    def _safe_start_coverage(self):
+        """
+        安全地启动覆盖率收集（线程安全）
+        
+        如果coverage已经启动，会跳过
+        """
+        with self._coverage_lock:
+            if self._coverage_started:
+                logger.debug("[PYCA] Coverage already started, skipping start()")
+                return
+            
+            try:
+                self.cov.start()
+                self._coverage_started = True
+                logger.debug("[PYCA] Coverage collection started safely")
+            except Exception as e:
+                logger.error(f"[PYCA] Failed to start coverage: {e}", exc_info=True)
+                # 即使启动失败，也标记为未启动，允许后续重试
+                self._coverage_started = False
     
     def _map_path(self, filename: str) -> str:
         """
@@ -256,7 +313,7 @@ class CoverageAgent:
         if self.timer:
             self.timer.cancel()
         if self.cov:
-            self.cov.stop()
+            self._safe_stop_coverage()
         logger.info("[PYCA] Agent stopped")
     
     def _start_timer(self):
@@ -290,7 +347,7 @@ class CoverageAgent:
         time.sleep(2)  # 等待0.5秒，让coverage有机会收集数据
         
         # a. cov.stop()
-        self.cov.stop()
+        self._safe_stop_coverage()
         
         try:
             try:
@@ -323,10 +380,7 @@ class CoverageAgent:
                 logger.warning("[PYCA] Startup coverage report failed, but continuing service startup (non-blocking)")
         finally:
             # h. cov.start() - 确保覆盖率收集继续运行
-            try:
-                self.cov.start()
-            except Exception as e:
-                logger.error(f"[PYCA] Failed to restart coverage collection: {e}", exc_info=True)
+            self._safe_start_coverage()
         
         logger.info("[PYCA] Startup coverage report completed")
     
@@ -335,7 +389,7 @@ class CoverageAgent:
         logger.info("[PYCA] Starting coverage flush...")
         
         # a. cov.stop() - 停止覆盖率收集
-        self.cov.stop()
+        self._safe_stop_coverage()
         logger.debug("[PYCA] Coverage collection stopped")
         
         try:
@@ -415,7 +469,7 @@ class CoverageAgent:
                     logger.warning("[PYCA] Coverage report failed, but continuing service execution (non-blocking)")
         finally:
             # i. cov.start() - 继续覆盖率收集
-            self.cov.start()
+            self._safe_start_coverage()
             logger.debug("[PYCA] Coverage collection restarted")
         
         logger.info("[PYCA] Coverage flush completed")
@@ -1366,8 +1420,6 @@ class CoverageAgent:
         
         注意：此方法捕获所有异常并记录日志，不会抛出异常，确保上报失败不会影响被测服务
         """
-        # 在方法开始处立即打印日志，确保能看到
-        logger.info(f"[PYCA] _publish_to_mq called, RabbitMQ URL: {self.rabbitmq_url}")
         
         connection = None
         try:
@@ -1384,8 +1436,6 @@ class CoverageAgent:
             
             # 添加调试日志
             logger.info(f"[PYCA] Connecting to RabbitMQ: host={host}, port={port}, vhost={vhost}, username={username}")
-            logger.info(f"[PYCA] Full RabbitMQ URL: {self.rabbitmq_url}")
-            logger.info(f"[PYCA] Parsed URL components: hostname={parsed.hostname}, port={parsed.port}, path={parsed.path}")
             
             # 连接RabbitMQ
             # 验证hostname不为空，避免回退到localhost
@@ -1418,11 +1468,9 @@ class CoverageAgent:
             )
             
             logger.info(f"[PYCA] Pika connection parameters: host={parameters.host}, port={parameters.port}, vhost={parameters.virtual_host}")
-            logger.info(f"[PYCA] Attempting to connect to RabbitMQ at {host}:{port}...")
             
             # 连接操作可能抛出异常，需要确保在 try 块内
             try:
-                logger.info(f"[PYCA] Attempting to connect to RabbitMQ at {host}:{port}...")
                 connection = pika.BlockingConnection(parameters)
             except Exception as conn_error:
                 # 连接失败，记录日志但不抛出
