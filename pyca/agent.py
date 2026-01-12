@@ -842,8 +842,10 @@ class CoverageAgent:
             logger.info("[PYCA] ============================================")
             
             # 上报到MQ（使用额外的异常保护，确保绝对不会抛出异常）
+            logger.info("[PYCA] About to call _publish_to_mq...")
             try:
                 self._publish_to_mq(report)
+                logger.info("[PYCA] _publish_to_mq returned successfully")
             except Exception as publish_error:
                 # 即使 _publish_to_mq 内部有未捕获的异常（理论上不应该发生），也要捕获
                 logger.error(f"[PYCA] Unexpected error in _publish_to_mq (should not happen): {publish_error}", exc_info=True)
@@ -1364,6 +1366,9 @@ class CoverageAgent:
         
         注意：此方法捕获所有异常并记录日志，不会抛出异常，确保上报失败不会影响被测服务
         """
+        # 在方法开始处立即打印日志，确保能看到
+        logger.info(f"[PYCA] _publish_to_mq called, RabbitMQ URL: {self.rabbitmq_url}")
+        
         connection = None
         try:
             # 解析RabbitMQ URL
