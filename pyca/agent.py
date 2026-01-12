@@ -178,6 +178,65 @@ class CoverageAgent:
             logger.warning(f"[PYCA] Failed to parse Python file {filepath}: {e}")
             return set()
     
+    def _get_project_root(self) -> Optional[str]:
+        """
+        获取项目根目录（Git 仓库根目录或当前工作目录）
+        
+        Returns:
+            项目根目录路径，如果找不到则返回 None
+        """
+        # 优先查找 Git 仓库根目录
+        cwd = os.getcwd()
+        git_dir = self._find_git_dir(cwd)
+        if git_dir:
+            repo_root = os.path.dirname(git_dir)
+            return os.path.abspath(repo_root)
+        
+        # 如果没有 Git 仓库，使用当前工作目录
+        return os.path.abspath(cwd)
+    
+    def _to_relative_path(self, filepath: str, project_root: Optional[str] = None) -> str:
+        """
+        将绝对路径转换为相对于项目根目录的相对路径
+        
+        Args:
+            filepath: 文件路径（绝对或相对）
+            project_root: 项目根目录，如果为 None 则自动检测
+            
+        Returns:
+            相对路径，如果无法转换则返回原路径
+        """
+        if not os.path.isabs(filepath):
+            # 已经是相对路径，直接返回
+            return filepath
+        
+        if project_root is None:
+            project_root = self._get_project_root()
+        
+        if not project_root:
+            # 无法确定项目根目录，返回原路径
+            return filepath
+        
+        try:
+            # 转换为绝对路径
+            abs_filepath = os.path.abspath(filepath)
+            abs_project_root = os.path.abspath(project_root)
+            
+            # 检查文件是否在项目根目录下
+            if abs_filepath.startswith(abs_project_root):
+                # 计算相对路径
+                relative_path = os.path.relpath(abs_filepath, abs_project_root)
+                # 统一使用正斜杠（跨平台兼容）
+                relative_path = relative_path.replace(os.sep, '/')
+                return relative_path
+            else:
+                # 文件不在项目根目录下，返回原路径
+                logger.debug(f"[PYCA] File {filepath} is not under project root {project_root}, keeping absolute path")
+                return filepath
+        except Exception as e:
+            logger.warning(f"[PYCA] Failed to convert path {filepath} to relative: {e}")
+            return filepath
+    
     def start(self):
         """启动定时采集"""
         if self.running:
@@ -555,6 +614,20 @@ class CoverageAgent:
                     logger.debug(f"[PYCA] Fallback: File {filename}: {len(lines)} executed lines (from data.lines)")
                 else:
                     logger.warning(f"[PYCA] Fallback: File {filename}: no executed lines found")
+        
+        # 将所有绝对路径转换为相对路径
+        project_root = self._get_project_root()
+        if project_root:
+            logger.debug(f"[PYCA] Converting absolute paths to relative paths (project root: {project_root})")
+            normalized_coverage_data = {}
+            for filename, line_coverage in coverage_data.items():
+                relative_filename = self._to_relative_path(filename, project_root)
+                if relative_filename != filename:
+                    logger.debug(f"[PYCA] Converted path: {filename} -> {relative_filename}")
+                normalized_coverage_data[relative_filename] = line_coverage
+            coverage_data = normalized_coverage_data
+        else:
+            logger.debug(f"[PYCA] Could not determine project root, keeping original paths")
         
         # 验证返回的数据结构
         logger.debug(f"[PYCA] _get_coverage_data returning {len(coverage_data)} files")
