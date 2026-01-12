@@ -1417,6 +1417,7 @@ class CoverageAgent:
             
             # 连接操作可能抛出异常，需要确保在 try 块内
             try:
+                logger.info(f"[PYCA] Attempting to connect to RabbitMQ at {host}:{port}...")
                 connection = pika.BlockingConnection(parameters)
             except Exception as conn_error:
                 # 连接失败，记录日志但不抛出
