@@ -8,9 +8,11 @@ import json
 import hashlib
 import logging
 import threading
+import ast
 from typing import Dict, List, Set, Optional, Tuple
 from pathlib import Path
 import coverage
+from coverage.exceptions import NoSource
 import pika
 from urllib.parse import urlparse
 
@@ -29,6 +31,7 @@ class CoverageAgent:
                 - rabbitmq_url: RabbitMQ连接URL (默认从环境变量PYCA_RABBITMQ_URL获取，如果未设置则使用默认值)
                 - flush_interval: 采集间隔（秒，默认60）
                 - fingerprint_file: fingerprint存储文件路径（默认~/.pyca_fingerprint）
+                - path_mapping: 路径映射字典，格式 {host_path: container_path}，用于容器环境路径转换
         """
         self.config = config or {}
         # PYCA_RABBITMQ_URL: 优先使用config，其次环境变量（支持PCA_*向后兼容），最后使用默认值（使用相同网段时使用rabbitmq:5672）
@@ -86,7 +89,94 @@ class CoverageAgent:
         )
         self._repo_id_cache = self._load_repo_id_cache()
         
+        # 路径映射配置（用于容器环境，将宿主机路径转换为容器内路径）
+        # 支持格式：环境变量 PYCA_PATH_MAPPING 或 PCA_PATH_MAPPING
+        # 格式：host_path1:container_path1;host_path2:container_path2
+        # 或通过 config 传入字典：{"host_path": "container_path"}
+        path_mapping_str = (
+            self.config.get('path_mapping') or
+            os.getenv('PYCA_PATH_MAPPING') or
+            os.getenv('PCA_PATH_MAPPING')
+        )
+        self.path_mapping = {}
+        if path_mapping_str:
+            if isinstance(path_mapping_str, dict):
+                # 如果直接传入字典
+                self.path_mapping = path_mapping_str
+            else:
+                # 从环境变量解析：host_path1:container_path1;host_path2:container_path2
+                for mapping in path_mapping_str.split(';'):
+                    mapping = mapping.strip()
+                    if ':' in mapping:
+                        host_path, container_path = mapping.split(':', 1)
+                        self.path_mapping[host_path.strip()] = container_path.strip()
+            if self.path_mapping:
+                logger.info(f"[PYCA] Path mapping configured: {len(self.path_mapping)} mappings")
+                for host_path, container_path in list(self.path_mapping.items())[:3]:
+                    logger.debug(f"[PYCA]   {host_path} -> {container_path}")
+        
         logger.info(f"[PYCA] Agent initialized, flush_interval={self.flush_interval}s")
+    
+    def _map_path(self, filename: str) -> str:
+        """
+        将宿主机路径转换为容器内路径（如果配置了路径映射）
+        
+        Args:
+            filename: 原始文件路径
+            
+        Returns:
+            转换后的文件路径，如果未配置映射或无法匹配则返回原路径
+        """
+        if not self.path_mapping:
+            return filename
+        
+        # 按路径长度从长到短排序，优先匹配更具体的路径
+        sorted_mappings = sorted(self.path_mapping.items(), key=lambda x: len(x[0]), reverse=True)
+        
+        for host_path, container_path in sorted_mappings:
+            # 确保路径以 / 结尾或完全匹配
+            if filename.startswith(host_path):
+                # 替换路径前缀
+                mapped_path = filename.replace(host_path, container_path, 1)
+                # 检查转换后的路径是否存在
+                if os.path.exists(mapped_path):
+                    logger.debug(f"[PYCA] Mapped path: {filename} -> {mapped_path}")
+                    return mapped_path
+                else:
+                    logger.debug(f"[PYCA] Mapped path not found: {filename} -> {mapped_path} (file does not exist)")
+        
+        return filename
+    
+    def _parse_python_statements(self, filepath: str) -> Set[int]:
+        """
+        解析 Python 文件，获取所有可执行语句的行号
+        
+        Args:
+            filepath: Python 文件路径
+            
+        Returns:
+            可执行语句的行号集合
+        """
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                source = f.read()
+            
+            tree = ast.parse(source, filename=filepath)
+            statements = set()
+            
+            for node in ast.walk(tree):
+                if hasattr(node, 'lineno') and node.lineno:
+                    # 记录所有有行号的节点（函数、类、语句等）
+                    statements.add(node.lineno)
+                    # 对于多行节点，也记录结束行
+                    if hasattr(node, 'end_lineno') and node.end_lineno:
+                        for line in range(node.lineno, node.end_lineno + 1):
+                            statements.add(line)
+            
+            return statements
+        except Exception as e:
+            logger.warning(f"[PYCA] Failed to parse Python file {filepath}: {e}")
+            return set()
     
     def start(self):
         """启动定时采集"""
@@ -291,6 +381,7 @@ class CoverageAgent:
                 # 不同版本的 coverage 库返回的元组格式可能不同：
                 # 格式1: (statements, excluded, missing, missing_branch, excluded_branch) - 标准格式
                 # 格式2: (filename, statements, missing, missing_str) - 某些版本的格式
+                # 注意：coverage.analysis() 需要使用 coverage 数据中记录的文件名
                 analysis_result = self.cov.analysis(filename)
                 
                 # 检测返回格式：如果第一个元素是字符串（文件名），说明是格式2
@@ -407,6 +498,54 @@ class CoverageAgent:
                     logger.debug(f"[PYCA] File {filename}: {len(statements)} statements, {executed_count} executed, {len(file_coverage) - executed_count} not executed")
                 else:
                     logger.debug(f"[PYCA] File {filename}: no coverage data (all lines excluded or no statements)")
+            except NoSource as e:
+                # 源文件不存在（常见于容器环境，源文件不在容器内）
+                logger.debug(f"[PYCA] Source file not available for {filename}: {e}")
+                
+                # 尝试路径映射：如果配置了路径映射，尝试用映射后的路径读取源文件
+                mapped_filename = self._map_path(filename)
+                if mapped_filename != filename and os.path.exists(mapped_filename):
+                    # 映射后的文件存在，尝试解析获取所有可执行语句
+                    try:
+                        logger.debug(f"[PYCA] Trying mapped path: {mapped_filename}")
+                        # 使用 AST 解析 Python 文件获取所有可执行语句
+                        statements = self._parse_python_statements(mapped_filename)
+                        
+                        if statements:
+                            # 从原始 coverage 数据获取已执行的行
+                            executed_lines = set(data.lines(filename))
+                            
+                            # 构建覆盖率数据
+                            file_coverage = {}
+                            for line_num in statements:
+                                file_coverage[line_num] = 1 if line_num in executed_lines else 0
+                            
+                            coverage_data[filename] = file_coverage
+                            executed_count = sum(1 for count in file_coverage.values() if count > 0)
+                            logger.debug(f"[PYCA] Mapped path analysis: {filename} -> {mapped_filename}: {len(statements)} statements, {executed_count} executed")
+                        else:
+                            # 如果解析失败，回退到只记录已执行的行
+                            lines = data.lines(filename)
+                            if lines:
+                                coverage_data[filename] = {line: 1 for line in lines}
+                                logger.debug(f"[PYCA] Fallback: File {filename}: {len(lines)} executed lines (from data.lines)")
+                    except Exception as map_error:
+                        logger.debug(f"[PYCA] Mapped path analysis failed: {map_error}")
+                        # 回退到只记录已执行的行
+                        lines = data.lines(filename)
+                        if lines:
+                            coverage_data[filename] = {line: 1 for line in lines}
+                            logger.debug(f"[PYCA] Fallback: File {filename}: {len(lines)} executed lines (from data.lines)")
+                        else:
+                            logger.debug(f"[PYCA] Fallback: File {filename}: no executed lines found")
+                else:
+                    # 没有路径映射或映射后的文件也不存在，回退到只记录已执行的行
+                    lines = data.lines(filename)
+                    if lines:
+                        coverage_data[filename] = {line: 1 for line in lines}
+                        logger.debug(f"[PYCA] Fallback: File {filename}: {len(lines)} executed lines (from data.lines)")
+                    else:
+                        logger.debug(f"[PYCA] Fallback: File {filename}: no executed lines found")
             except Exception as e:
                 logger.warning(f"[PYCA] Failed to analyze {filename}: {e}", exc_info=True)
                 # 如果分析失败，回退到只记录已执行的行
