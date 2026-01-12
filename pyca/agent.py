@@ -31,12 +31,12 @@ class CoverageAgent:
                 - fingerprint_file: fingerprint存储文件路径（默认~/.pyca_fingerprint）
         """
         self.config = config or {}
-        # PYCA_RABBITMQ_URL: 优先使用config，其次环境变量（支持PCA_*向后兼容），最后使用默认值
+        # PYCA_RABBITMQ_URL: 优先使用config，其次环境变量（支持PCA_*向后兼容），最后使用默认值（使用相同网段时使用rabbitmq:5672）
         self.rabbitmq_url = (
             self.config.get('rabbitmq_url') or 
             os.getenv('PYCA_RABBITMQ_URL') or 
             os.getenv('PCA_RABBITMQ_URL') or 
-            'amqp://coverage:coverage123@localhost:5672/'
+            'amqp://coverage:coverage123@rabbitmq:5672/'
         )
         # PYCA_FLUSH_INTERVAL: 优先使用config，其次环境变量（支持PCA_*向后兼容），最后使用默认值60
         flush_interval_str = (
