@@ -841,8 +841,13 @@ class CoverageAgent:
             logger.info(f"[PYCA] {report_json}")
             logger.info("[PYCA] ============================================")
             
-            # 上报到MQ（内部会捕获异常，不会抛出）
-            self._publish_to_mq(report)
+            # 上报到MQ（使用额外的异常保护，确保绝对不会抛出异常）
+            try:
+                self._publish_to_mq(report)
+            except Exception as publish_error:
+                # 即使 _publish_to_mq 内部有未捕获的异常（理论上不应该发生），也要捕获
+                logger.error(f"[PYCA] Unexpected error in _publish_to_mq (should not happen): {publish_error}", exc_info=True)
+                logger.warning("[PYCA] Coverage report failed, but continuing service execution (non-blocking)")
             
         except Exception as e:
             # 捕获所有异常，确保上报失败不会影响被测服务
@@ -1408,43 +1413,66 @@ class CoverageAgent:
             
             logger.info(f"[PYCA] Pika connection parameters: host={parameters.host}, port={parameters.port}, vhost={parameters.virtual_host}")
             logger.info(f"[PYCA] Attempting to connect to RabbitMQ at {host}:{port}...")
-            connection = pika.BlockingConnection(parameters)
-            channel = connection.channel()
             
-            # 声明exchange（如果不存在）
-            channel.exchange_declare(
-                exchange='coverage_exchange',
-                exchange_type='topic',
-                durable=True
-            )
+            # 连接操作可能抛出异常，需要确保在 try 块内
+            try:
+                connection = pika.BlockingConnection(parameters)
+            except Exception as conn_error:
+                # 连接失败，记录日志但不抛出
+                logger.error(f"[PYCA] Failed to establish RabbitMQ connection: {conn_error}")
+                logger.warning("[PYCA] Coverage report failed, but continuing service execution (non-blocking)")
+                return  # 直接返回，不继续执行
             
-            # 发布消息
-            message_body = json.dumps(report)
-            channel.basic_publish(
-                exchange='coverage_exchange',
-                routing_key='coverage.report',
-                body=message_body,
-                properties=pika.BasicProperties(
-                    content_type='application/json',
-                    delivery_mode=2  # 持久化
+            try:
+                channel = connection.channel()
+                
+                # 声明exchange（如果不存在）
+                channel.exchange_declare(
+                    exchange='coverage_exchange',
+                    exchange_type='topic',
+                    durable=True
                 )
-            )
-            
-            connection.close()
-            connection = None  # 标记已关闭，避免在finally中重复关闭
-            
-            logger.info(f"[PYCA] Coverage report published successfully: repo={report.get('repo')}, "
-                       f"branch={report.get('branch')}, commit={report.get('commit')}")
+                
+                # 发布消息
+                message_body = json.dumps(report)
+                channel.basic_publish(
+                    exchange='coverage_exchange',
+                    routing_key='coverage.report',
+                    body=message_body,
+                    properties=pika.BasicProperties(
+                        content_type='application/json',
+                        delivery_mode=2  # 持久化
+                    )
+                )
+                
+                logger.info(f"[PYCA] Coverage report published successfully: repo={report.get('repo')}, "
+                           f"branch={report.get('branch')}, commit={report.get('commit')}")
+            finally:
+                # 确保连接被关闭（在内部 try-finally 中）
+                try:
+                    if connection is not None:
+                        connection.close()
+                        connection = None  # 标记已关闭，避免外层 finally 重复关闭
+                except Exception as close_error:
+                    logger.debug(f"[PYCA] Error closing connection after publish: {close_error}")
         
         except Exception as e:
             # 捕获所有异常，记录日志但不抛出，确保不影响被测服务
             logger.error(f"[PYCA] Failed to publish to MQ: {e}", exc_info=True)
             logger.warning("[PYCA] Coverage report failed, but continuing service execution (non-blocking)")
         finally:
-            # 确保连接被正确关闭
-            if connection is not None and not connection.is_closed:
+            # 确保连接被正确关闭（使用额外的异常保护）
+            if connection is not None:
                 try:
-                    connection.close()
+                    # 检查连接状态时也可能抛出异常，需要额外保护
+                    try:
+                        is_closed = connection.is_closed
+                    except Exception:
+                        is_closed = True  # 如果无法检查状态，假设已关闭
+                    
+                    if not is_closed:
+                        connection.close()
                 except Exception as e:
+                    # 关闭连接时的异常也不应该影响服务
                     logger.debug(f"[PYCA] Error closing connection: {e}")
 
