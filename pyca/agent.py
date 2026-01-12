@@ -303,6 +303,87 @@ class CoverageAgent:
             logger.warning(f"[PYCA] Failed to parse Python file {filepath}: {e}")
             return set()
     
+    def _scan_project_files(self) -> Dict[str, Dict[int, int]]:
+        """
+        扫描项目中的 Python 文件，生成初始覆盖率数据（所有行 count=0）
+        
+        用于启动时如果 coverage 还没有跟踪到任何文件的情况
+        
+        Returns:
+            {filename: {line_number: 0, ...}} - 所有可执行行都标记为未执行（count=0）
+        """
+        coverage_data = {}
+        project_root = self._get_project_root()
+        
+        if not project_root:
+            logger.warning("[PYCA] Cannot determine project root, skipping project file scan")
+            return coverage_data
+        
+        logger.info(f"[PYCA] Scanning project files in: {project_root}")
+        
+        # 需要排除的目录（精确匹配）
+        exclude_dirs = {'.git', '__pycache__', '.pytest_cache', '.venv', 'venv', 'env', 
+                       'node_modules', '.tox', 'build', 'dist'}
+        
+        scanned_count = 0
+        parsed_count = 0
+        
+        try:
+            # 遍历项目目录
+            for root, dirs, files in os.walk(project_root):
+                # 排除不需要的目录（修改 dirs 列表会影响 os.walk 的遍历）
+                # 排除：1) 在 exclude_dirs 中的目录 2) 以 . 开头的隐藏目录 3) 包含 .egg-info 的目录
+                dirs[:] = [d for d in dirs 
+                          if d not in exclude_dirs 
+                          and not d.startswith('.')
+                          and '.egg-info' not in d]
+                
+                for file in files:
+                    if not file.endswith('.py'):
+                        continue
+                    
+                    filepath = os.path.join(root, file)
+                    
+                    # 检查文件路径中是否包含排除的目录
+                    rel_path = os.path.relpath(filepath, project_root)
+                    path_parts = rel_path.split(os.sep)
+                    if any(part in exclude_dirs for part in path_parts):
+                        continue
+                    if any(part.startswith('.') for part in path_parts if part):
+                        continue
+                    
+                    scanned_count += 1
+                    
+                    # 尝试解析文件获取可执行语句
+                    try:
+                        # 先尝试使用路径映射
+                        mapped_path = self._map_path(filepath)
+                        if mapped_path != filepath and os.path.exists(mapped_path):
+                            statements = self._parse_python_statements(mapped_path)
+                        elif os.path.exists(filepath):
+                            statements = self._parse_python_statements(filepath)
+                        else:
+                            logger.debug(f"[PYCA] File not found: {filepath}")
+                            continue
+                        
+                        if statements:
+                            # 转换为相对路径
+                            relative_path = self._to_relative_path(filepath, project_root)
+                            # 构建覆盖率数据：所有行都标记为未执行（count=0）
+                            coverage_data[relative_path] = {line_num: 0 for line_num in sorted(statements)}
+                            parsed_count += 1
+                            logger.debug(f"[PYCA] Scanned {relative_path}: {len(statements)} statements")
+                    except Exception as e:
+                        logger.debug(f"[PYCA] Failed to parse {filepath}: {e}")
+                        continue
+            
+            logger.info(f"[PYCA] Project scan completed: {scanned_count} files scanned, {parsed_count} files parsed, {len(coverage_data)} files in coverage data")
+            
+        except Exception as e:
+            logger.warning(f"[PYCA] Error scanning project files: {e}")
+        
+        return coverage_data
+    
     def _get_project_root(self) -> Optional[str]:
         """
         获取项目根目录（Git 仓库根目录或当前工作目录）
@@ -425,6 +506,20 @@ class CoverageAgent:
                 # 检查是否有数据
                 total_lines = sum(len(lines) for lines in coverage_data.values())
                 logger.info(f"[PYCA] Coverage data collected: {len(coverage_data)} files, {total_lines} total lines")
+                
+                # 如果 coverage_data 为空（启动时还没有代码被执行），扫描项目文件生成初始数据
+                if not coverage_data or total_lines == 0:
+                    logger.info("[PYCA] Coverage data is empty on startup, scanning project files to generate initial data...")
+                    scanned_data = self._scan_project_files()
+                    if scanned_data:
+                        # 合并扫描的数据（扫描的数据优先级较低，如果 coverage_data 中有数据则保留）
+                        for filename, line_coverage in scanned_data.items():
+                            if filename not in coverage_data:
+                                coverage_data[filename] = line_coverage
+                        total_lines = sum(len(lines) for lines in coverage_data.values())
+                        logger.info(f"[PYCA] After scanning: {len(coverage_data)} files, {total_lines} total lines")
+                    else:
+                        logger.warning("[PYCA] Project scan returned no data, will report empty coverage")
                 
                 # c. 提取 executed_lines（用于更新fingerprint）
                 executed_lines = self._extract_executed_lines(coverage_data)
