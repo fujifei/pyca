@@ -983,6 +983,20 @@ class CoverageAgent:
             # 获取Git信息
             git_info = self._get_git_info()
             
+            # 如果 repo_id 为空但 repo 不为空，尝试再次获取 repo_id（不阻塞上报）
+            if not git_info.get("repo_id") and git_info.get("repo"):
+                logger.info("[PYCA] Repo ID is empty but repo URL exists, attempting to refresh repo_id...")
+                try:
+                    # 强制刷新 repo_id（不阻塞，使用较短的超时）
+                    git_info_refreshed = self._get_git_info(force_refresh_repo_id=True)
+                    if git_info_refreshed.get("repo_id"):
+                        git_info["repo_id"] = git_info_refreshed["repo_id"]
+                        logger.info(f"[PYCA] Successfully refreshed repo_id: {git_info['repo_id']}")
+                    else:
+                        logger.warning("[PYCA] Failed to refresh repo_id, will report without repo_id")
+                except Exception as e:
+                    logger.warning(f"[PYCA] Error refreshing repo_id: {e}, will report without repo_id")
+            
             # 生成覆盖率原始数据（类似goc格式）
             # 添加调试日志：检查coverage_data的内容
             logger.info(f"[PYCA] Coverage data before formatting: {len(coverage_data)} files")
@@ -1298,96 +1312,110 @@ class CoverageAgent:
         ranges.append((start, end))
         return ranges
     
-    def _get_git_info(self) -> Dict:
-        """获取Git信息"""
-        if self._git_info is not None:
+    def _get_git_info(self, force_refresh_repo_id: bool = False) -> Dict:
+        """
+        获取Git信息
+        
+        Args:
+            force_refresh_repo_id: 如果为 True，即使已有缓存的 git_info，也会重新尝试获取 repo_id
+        """
+        # 如果已有缓存且不需要强制刷新 repo_id，直接返回
+        if self._git_info is not None and not force_refresh_repo_id:
             return self._git_info
         
-        git_info = {
-            "repo": "",
-            "repo_id": "",
-            "branch": "",
-            "commit": "",
-            "ci": {}
-        }
+        # 如果有缓存，先使用缓存的值（避免重复获取 repo、branch、commit）
+        if self._git_info is not None:
+            git_info = self._git_info.copy()
+        else:
+            git_info = {
+                "repo": "",
+                "repo_id": "",
+                "branch": "",
+                "commit": "",
+                "ci": {}
+            }
+            
+            try:
+                import subprocess
+                
+                # 获取当前工作目录
+                cwd = os.getcwd()
+                
+                # 查找.git目录
+                git_dir = self._find_git_dir(cwd)
+                if not git_dir:
+                    logger.warning("[PYCA] .git directory not found")
+                    self._git_info = git_info
+                    return git_info
+                
+                repo_root = os.path.dirname(git_dir)
+                
+                # 获取remote origin URL
+                try:
+                    result = subprocess.run(
+                        ['git', 'config', '--get', 'remote.origin.url'],
+                        cwd=repo_root,
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    if result.returncode == 0:
+                        git_info["repo"] = result.stdout.strip()
+                        logger.info(f"[PYCA] Retrieved git repo URL: {git_info['repo']}")
+                    else:
+                        logger.warning(f"[PYCA] Failed to get git remote URL: returncode={result.returncode}, stderr={result.stderr.strip()}")
+                except Exception as e:
+                    logger.warning(f"[PYCA] Failed to get git remote: {e}")
+                
+                # 获取branch
+                try:
+                    result = subprocess.run(
+                        ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                        cwd=repo_root,
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    if result.returncode == 0:
+                        git_info["branch"] = result.stdout.strip()
+                except Exception as e:
+                    logger.debug(f"[PYCA] Failed to get git branch: {e}")
+                
+                # 获取commit
+                try:
+                    result = subprocess.run(
+                        ['git', 'rev-parse', 'HEAD'],
+                        cwd=repo_root,
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    if result.returncode == 0:
+                        git_info["commit"] = result.stdout.strip()
+                except Exception as e:
+                    logger.debug(f"[PYCA] Failed to get git commit: {e}")
+                
+                # 获取CI信息
+                git_info["ci"] = self._get_ci_info()
+                
+            except Exception as e:
+                logger.warning(f"[PYCA] Failed to get git info: {e}")
         
-        try:
-            import subprocess
-            
-            # 获取当前工作目录
-            cwd = os.getcwd()
-            
-            # 查找.git目录
-            git_dir = self._find_git_dir(cwd)
-            if not git_dir:
-                logger.warning("[PYCA] .git directory not found")
-                return git_info
-            
-            repo_root = os.path.dirname(git_dir)
-            
-            # 获取remote origin URL
-            try:
-                result = subprocess.run(
-                    ['git', 'config', '--get', 'remote.origin.url'],
-                    cwd=repo_root,
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if result.returncode == 0:
-                    git_info["repo"] = result.stdout.strip()
-                    logger.info(f"[PYCA] Retrieved git repo URL: {git_info['repo']}")
-                else:
-                    logger.warning(f"[PYCA] Failed to get git remote URL: returncode={result.returncode}, stderr={result.stderr.strip()}")
-            except Exception as e:
-                logger.warning(f"[PYCA] Failed to get git remote: {e}")
-            
-            # 获取branch
-            try:
-                result = subprocess.run(
-                    ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                    cwd=repo_root,
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if result.returncode == 0:
-                    git_info["branch"] = result.stdout.strip()
-            except Exception as e:
-                logger.debug(f"[PYCA] Failed to get git branch: {e}")
-            
-            # 获取commit
-            try:
-                result = subprocess.run(
-                    ['git', 'rev-parse', 'HEAD'],
-                    cwd=repo_root,
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if result.returncode == 0:
-                    git_info["commit"] = result.stdout.strip()
-            except Exception as e:
-                logger.debug(f"[PYCA] Failed to get git commit: {e}")
-            
-            # 获取CI信息
-            git_info["ci"] = self._get_ci_info()
-            
-            # 尝试获取repo_id（从GitHub API）
-            if git_info["repo"]:
-                logger.info(f"[PYCA] Attempting to get repo_id for repo: {git_info['repo']}")
-                repo_id = self._get_github_repo_id(git_info["repo"])
-                if repo_id:
-                    git_info["repo_id"] = repo_id
-                    logger.info(f"[PYCA] Successfully set repo_id: {repo_id}")
-                else:
-                    logger.warning(f"[PYCA] Failed to get repo_id for repo: {git_info['repo']}")
+        # 尝试获取repo_id（从GitHub API）
+        # 如果 repo_id 为空或需要强制刷新，则尝试获取
+        if git_info["repo"] and (not git_info.get("repo_id") or force_refresh_repo_id):
+            logger.info(f"[PYCA] Attempting to get repo_id for repo: {git_info['repo']}")
+            repo_id = self._get_github_repo_id(git_info["repo"])
+            if repo_id:
+                git_info["repo_id"] = repo_id
+                logger.info(f"[PYCA] Successfully set repo_id: {repo_id}")
             else:
-                logger.warning("[PYCA] Repo URL is empty, cannot get repo_id")
-            
-        except Exception as e:
-            logger.warning(f"[PYCA] Failed to get git info: {e}")
+                if not git_info.get("repo_id"):
+                    logger.warning(f"[PYCA] Failed to get repo_id for repo: {git_info['repo']}")
+        elif not git_info["repo"]:
+            logger.warning("[PYCA] Repo URL is empty, cannot get repo_id")
         
+        # 更新缓存
         self._git_info = git_info
         return git_info
     
