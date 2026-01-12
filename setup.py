@@ -154,6 +154,7 @@ setup(
     install_requires=[
         "coverage>=7.0.0",
         "pika>=1.3.0",
+        "python-dotenv>=1.0.0",
     ],
     python_requires=">=3.7",
     classifiers=[

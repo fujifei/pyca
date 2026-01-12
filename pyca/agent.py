@@ -18,6 +18,14 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
+# 尝试导入 dotenv，如果失败则忽略（向后兼容）
+try:
+    from dotenv import load_dotenv
+    DOTENV_AVAILABLE = True
+except ImportError:
+    DOTENV_AVAILABLE = False
+    logger.warning("[PYCA] python-dotenv not installed, .env file support disabled. Install with: pip install python-dotenv")
+
 
 class CoverageAgent:
     """覆盖率采集代理"""
@@ -32,7 +40,11 @@ class CoverageAgent:
                 - flush_interval: 采集间隔（秒，默认60）
                 - fingerprint_file: fingerprint存储文件路径（默认~/.pyca_fingerprint）
                 - path_mapping: 路径映射字典，格式 {host_path: container_path}，用于容器环境路径转换
+                - env_file: .env文件路径（默认自动查找项目根目录下的.env文件）
         """
+        # 首先加载 .env 文件（如果可用）
+        self._load_env_file(config)
+        
         self.config = config or {}
         # PYCA_RABBITMQ_URL: 优先使用config，其次环境变量（支持PCA_*向后兼容），最后使用默认值（使用相同网段时使用rabbitmq:5672）
         self.rabbitmq_url = (
@@ -118,6 +130,62 @@ class CoverageAgent:
                     logger.debug(f"[PYCA]   {host_path} -> {container_path}")
         
         logger.info(f"[PYCA] Agent initialized, flush_interval={self.flush_interval}s")
+    
+    def _load_env_file(self, config: Optional[Dict] = None):
+        """
+        加载 .env 文件到环境变量
+        
+        Args:
+            config: 配置字典，可以包含 env_file 键指定 .env 文件路径
+        """
+        if not DOTENV_AVAILABLE:
+            logger.debug("[PYCA] python-dotenv not available, skipping .env file loading")
+            return
+        
+        # 确定 .env 文件路径
+        env_file = None
+        if config and config.get('env_file'):
+            # 从配置中获取指定路径
+            env_file = Path(config['env_file'])
+        else:
+            # 自动查找：优先从项目根目录（Git仓库根目录）查找，其次从当前工作目录
+            # 查找 .git 目录来确定项目根目录
+            cwd = os.getcwd()
+            git_dir = None
+            dir_path = Path(cwd)
+            while dir_path != dir_path.parent:
+                git_path = dir_path / ".git"
+                if git_path.exists():
+                    git_dir = str(git_path)
+                    break
+                dir_path = dir_path.parent
+            
+            if git_dir:
+                project_root = os.path.dirname(git_dir)
+                env_file = Path(project_root) / '.env'
+                if not env_file.exists():
+                    # 如果项目根目录没有，尝试当前工作目录
+                    env_file = Path(cwd) / '.env'
+            else:
+                # 无法确定项目根目录，使用当前工作目录
+                env_file = Path(cwd) / '.env'
+        
+        # 加载 .env 文件
+        if env_file and env_file.exists():
+            try:
+                load_dotenv(env_file, override=False)  # override=False 表示不覆盖已存在的环境变量
+                logger.info(f"[PYCA] Loaded .env file: {env_file}")
+                
+                # 检查是否成功加载了 GitHub token
+                github_token = os.getenv('GITHUB_TOKEN') or os.getenv('PYCA_GITHUB_TOKEN') or os.getenv('PCA_GITHUB_TOKEN')
+                if github_token:
+                    logger.info("[PYCA] GitHub token found in environment (from .env or existing env vars)")
+                else:
+                    logger.debug("[PYCA] No GitHub token found in .env file")
+            except Exception as e:
+                logger.warning(f"[PYCA] Failed to load .env file {env_file}: {e}")
+        else:
+            logger.debug(f"[PYCA] .env file not found at {env_file}, skipping")
     
     def _safe_stop_coverage(self):
         """

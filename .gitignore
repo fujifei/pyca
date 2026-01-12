@@ -39,4 +39,4 @@ htmlcov/
 
 # PCA specific
 .pca_fingerprint
-
+.env

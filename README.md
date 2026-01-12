@@ -202,6 +202,26 @@ PYCA 会自动从 GitHub API 获取仓库的 `repo_id`。为了提升 API rate l
 
 #### 2. 设置环境变量
 
+PYCA 支持两种方式配置 GitHub Token：
+
+**方式1: 使用 .env 文件（推荐）**
+
+在项目根目录创建 `.env` 文件（PYCA 会自动查找并加载）：
+
+```bash
+# 在项目根目录创建 .env 文件
+cat > .env << EOF
+# GitHub Token 配置（用于获取 repo_id，提升 API rate limit）
+GITHUB_TOKEN=your_github_personal_access_token
+# 或者使用 PYCA 专用变量名：
+# PYCA_GITHUB_TOKEN=your_github_personal_access_token
+EOF
+```
+
+PYCA 会在启动时自动加载项目根目录下的 `.env` 文件。如果项目根目录没有 `.env` 文件，会尝试从当前工作目录加载。
+
+**方式2: 使用环境变量**
+
 ```bash
 # 方式1: 使用 GITHUB_TOKEN（标准环境变量）
 export GITHUB_TOKEN=your_github_personal_access_token
@@ -209,6 +229,11 @@ export GITHUB_TOKEN=your_github_personal_access_token
 # 方式2: 使用 PYCA_GITHUB_TOKEN（PYCA 专用）
 export PYCA_GITHUB_TOKEN=your_github_personal_access_token
 ```
+
+**优先级说明**：
+- 已存在的环境变量优先级最高（不会被 .env 文件覆盖）
+- .env 文件中的配置会补充未设置的环境变量
+- 支持的环境变量名称（按优先级）：`GITHUB_TOKEN` > `PYCA_GITHUB_TOKEN` > `PCA_GITHUB_TOKEN`
 
 #### 3. 验证
 
@@ -225,7 +250,14 @@ export PYCA_GITHUB_TOKEN=your_github_personal_access_token
 # 使用默认配置（RabbitMQ: amqp://coverage:coverage123@localhost:5672/, 间隔: 60秒）
 python your_app.py
 
-# 自定义配置（包含 GitHub Token）
+# 方式1: 使用 .env 文件配置（推荐）
+# 在项目根目录创建 .env 文件，包含：
+# GITHUB_TOKEN=your_github_token
+# PYCA_RABBITMQ_URL=amqp://user:pass@localhost:5672/
+# PYCA_FLUSH_INTERVAL=30
+python your_app.py
+
+# 方式2: 使用环境变量配置
 export PYCA_RABBITMQ_URL="amqp://user:pass@localhost:5672/"
 export PYCA_FLUSH_INTERVAL=30
 export GITHUB_TOKEN=your_github_token
