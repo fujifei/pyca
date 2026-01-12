@@ -284,7 +284,7 @@ class CoverageAgent:
         # 延迟一小段时间，确保coverage能收集到初始数据
         # 但即使没有数据，也要上报（至少上报所有可执行的行，count=0）
         import time
-        time.sleep(0.5)  # 等待0.5秒，让coverage有机会收集数据
+        time.sleep(2)  # 等待0.5秒，让coverage有机会收集数据
         
         # a. cov.stop()
         self.cov.stop()
@@ -415,7 +415,7 @@ class CoverageAgent:
         
         coverage_data = {}
         measured_files = data.measured_files()
-        logger.debug(f"[PYCA] Found {len(measured_files)} measured files")
+        logger.info(f"[PYCA] Found {len(measured_files)} measured files")
         
         # 检查是否有已执行的文件
         files_with_executed_lines = []
@@ -423,7 +423,7 @@ class CoverageAgent:
             lines = data.lines(filename)
             if lines:
                 files_with_executed_lines.append(filename)
-        logger.debug(f"[PYCA] Files with executed lines: {len(files_with_executed_lines)}/{len(measured_files)}")
+        logger.info(f"[PYCA] Files with executed lines: {len(files_with_executed_lines)}/{len(measured_files)}")
         
         if not measured_files:
             logger.warning("[PYCA] No measured files found, coverage may not be collecting data")
@@ -446,14 +446,14 @@ class CoverageAgent:
                 # 检测返回格式：如果第一个元素是字符串（文件名），说明是格式2
                 if len(analysis_result) >= 3 and isinstance(analysis_result[0], str):
                     # 格式2: (filename, statements, missing, ...)
-                    logger.debug(f"[PYCA] Detected analysis format 2: (filename, statements, missing, ...)")
+                    logger.info(f"[PYCA] Detected analysis format 2: (filename, statements, missing, ...)")
                     statements = analysis_result[1]  # 所有可执行的行号列表
                     missing = analysis_result[2]     # 未执行的行号列表
                     excluded = set()  # 格式2 中没有 excluded 信息，使用空集合
-                    logger.debug(f"[PYCA]   statements type: {type(statements)}, missing type: {type(missing)}")
+                    logger.info(f"[PYCA]   statements type: {type(statements)}, missing type: {type(missing)}")
                 elif len(analysis_result) >= 3:
                     # 格式1: (statements, excluded, missing, ...)
-                    logger.debug(f"[PYCA] Detected analysis format 1: (statements, excluded, missing, ...)")
+                    logger.info(f"[PYCA] Detected analysis format 1: (statements, excluded, missing, ...)")
                     statements = analysis_result[0]  # 所有可执行的行号集合
                     excluded = analysis_result[1]    # 被排除的行号集合
                     missing = analysis_result[2]     # 未执行的行号集合
@@ -519,7 +519,7 @@ class CoverageAgent:
                 executed_lines = set(data.lines(filename))
                 
                 # 添加调试日志
-                logger.debug(f"[PYCA] Analyzing {filename}: {len(statements)} statements, {len(executed_lines)} executed lines, {len(missing_set)} missing lines")
+                logger.info(f"[PYCA] Analyzing {filename}: {len(statements)} statements, {len(executed_lines)} executed lines, {len(missing_set)} missing lines")
                 if len(executed_lines) == 0 and len(statements) > 0:
                     logger.warning(f"[PYCA] WARNING: File {filename} has {len(statements)} statements but 0 executed lines - code may not have been executed")
                 
@@ -541,7 +541,7 @@ class CoverageAgent:
                     # 确保 file_coverage 的结构正确：{line_number: count}
                     # 添加验证和日志
                     sample_keys = list(file_coverage.keys())[:5]
-                    logger.debug(f"[PYCA] File {filename}: file_coverage sample keys: {sample_keys}, types: {[type(k) for k in sample_keys]}")
+                    logger.info(f"[PYCA] File {filename}: file_coverage sample keys: {sample_keys}, types: {[type(k) for k in sample_keys]}")
                     
                     # 验证：所有键应该是整数
                     invalid_keys = [k for k in file_coverage.keys() if not isinstance(k, int)]
@@ -554,12 +554,12 @@ class CoverageAgent:
                     
                     coverage_data[filename] = file_coverage
                     executed_count = sum(1 for count in file_coverage.values() if count > 0)
-                    logger.debug(f"[PYCA] File {filename}: {len(statements)} statements, {executed_count} executed, {len(file_coverage) - executed_count} not executed")
+                    logger.info(f"[PYCA] File {filename}: {len(statements)} statements, {executed_count} executed, {len(file_coverage) - executed_count} not executed")
                 else:
-                    logger.debug(f"[PYCA] File {filename}: no coverage data (all lines excluded or no statements)")
+                    logger.info(f"[PYCA] File {filename}: no coverage data (all lines excluded or no statements)")
             except NoSource as e:
                 # 源文件不存在（常见于容器环境，源文件不在容器内）
-                logger.debug(f"[PYCA] Source file not available for {filename}: {e}")
+                logger.info(f"[PYCA] Source file not available for {filename}: {e}")
                 
                 # 尝试路径映射：如果配置了路径映射，尝试用映射后的路径读取源文件
                 mapped_filename = self._map_path(filename)
@@ -606,12 +606,12 @@ class CoverageAgent:
                     else:
                         logger.debug(f"[PYCA] Fallback: File {filename}: no executed lines found")
             except Exception as e:
-                logger.warning(f"[PYCA] Failed to analyze {filename}: {e}", exc_info=True)
+                logger.error(f"[PYCA] Failed to analyze {filename}: {e}", exc_info=True)
                 # 如果分析失败，回退到只记录已执行的行
                 lines = data.lines(filename)
                 if lines:
                     coverage_data[filename] = {line: 1 for line in lines}
-                    logger.debug(f"[PYCA] Fallback: File {filename}: {len(lines)} executed lines (from data.lines)")
+                    logger.info(f"[PYCA] Fallback: File {filename}: {len(lines)} executed lines (from data.lines)")
                 else:
                     logger.warning(f"[PYCA] Fallback: File {filename}: no executed lines found")
         
