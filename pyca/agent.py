@@ -1367,6 +1367,7 @@ class CoverageAgent:
         connection = None
         try:
             # 解析RabbitMQ URL
+            logger.info(f"[PYCA] RabbitMQ URL: {self.rabbitmq_url}")
             parsed = urlparse(self.rabbitmq_url)
             logger.info(f"[PYCA] Parsed RabbitMQ URL: {parsed}")
             # 提取认证信息
